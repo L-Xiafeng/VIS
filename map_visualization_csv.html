@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>苏州园林地理分布可视化 - 高德地图 LOCA</title>
+    <title>苏州园林地理分布可视化</title>
     <style>
         * {
             margin: 0;
@@ -109,6 +109,84 @@
             font-weight: bold;
             color: #333;
         }
+
+        .district-panel {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.98);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            max-width: 380px;
+            min-width: 250px;
+            z-index: 9999;
+            max-height: 80vh;
+            overflow-y: auto;
+            border: 2px solid #1890ff;
+        }
+
+        .district-panel h2 {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #52c41a;
+            padding-bottom: 8px;
+        }
+
+        .district-stats {
+            font-size: 13px;
+            color: #666;
+            line-height: 1.8;
+        }
+
+        .district-stats .stat-item {
+            margin: 8px 0;
+            padding: 6px 10px;
+            background: #f5f5f5;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .district-stats .stat-label {
+            font-weight: 500;
+            color: #333;
+            font-size: 18px;
+        }
+
+        .district-stats .stat-value {
+            font-weight: bold;
+            color: #1890ff;
+            font-size: 20px;
+        }
+
+        .district-stats .stat-value.world {
+            color: #667eea;
+        }
+
+        .district-stats .stat-value.national {
+            color: #f5576c;
+        }
+
+        .district-stats .stat-value.provincial {
+            color: #00f2fe;
+        }
+
+        .district-stats .stat-value.city {
+            color: #38f9d7;
+        }
+
+        .district-hint {
+            margin-top: 15px;
+            padding: 10px;
+            background: #e6f7ff;
+            border-left: 3px solid #1890ff;
+            font-size: 12px;
+            color: #666;
+            border-radius: 4px;
+        }
     </style>
 </head>
 
@@ -118,7 +196,6 @@
         <h1>苏州园林地理分布</h1>
         <div class="stats">
             <p>总计园林数量: <strong id="total-count">0</strong></p>
-            <p>使用高德地图 LOCA 数据可视化 API 2.0</p>
         </div>
         <div class="legend">
             <div class="legend-item">
@@ -143,17 +220,46 @@
             </div>
         </div>
     </div>
+    <div class="district-panel" id="districtPanel" style="display: none;">
+        <h2 id="districtName">选择区县查看统计</h2>
+        <div class="district-stats" id="districtStats">
+            <div class="stat-item">
+                <span class="stat-label">世界文化遗产:</span>
+                <span class="stat-value world" id="worldCount">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">全国重点文保:</span>
+                <span class="stat-value national" id="nationalCount">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">省级文保:</span>
+                <span class="stat-value provincial" id="provincialCount">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">市级文保:</span>
+                <span class="stat-value city" id="cityCount">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">其他园林:</span>
+                <span class="stat-value" id="otherCount">0</span>
+            </div>
+            <div class="stat-item" style="background: #fff7e6; border: 1px solid #ffd591;">
+                <span class="stat-label" style="color: #d46b08;">总计:</span>
+                <span class="stat-value" style="color: #d46b08; font-size: 18px;" id="totalDistrictCount">0</span>
+            </div>
+        </div>
+    </div>
     <div class="loading" id="loading">正在加载地图数据...</div>
 
     <!-- 高德地图 JS API -->
-    <script src="https://webapi.amap.com/maps?v=2.0&key=YOUR_AMAP_KEY_HERE&plugin=AMap.Scale,AMap.ToolBar"></script>
+    <script  type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=your_api_key&plugin=AMap.Scale,AMap.ToolBar,AMap.DistrictSearch"></script>
     <!-- LOCA 数据可视化 API -->
-    <script src="https://webapi.amap.com/loca?v=2.0.0&key=YOUR_AMAP_KEY_HERE"></script>
+    <script  type="text/javascript" src="https://webapi.amap.com/loca?v=2.0.0&key=your_api_key"></script>
 
     <script>
         // 高德地图 API 配置
-        const AMAP_KEY = 'YOUR_AMAP_KEY_HERE'; // 替换为你的高德地图 Key
-        const SECURITY_CODE = 'YOUR_SECURITY_CODE_HERE'; // 替换为你的安全密钥
+        const AMAP_KEY = 'your_api_key'; // 替换为你的高德地图 Key
+        const SECURITY_CODE = 'your_api_secret'; // 替换为你的安全密钥
 
         // 设置安全密钥
         window._AMapSecurityConfig = {
@@ -249,6 +355,173 @@
             return levelOrder[level] || 0;
         }
 
+        // 全局变量存储园林数据和地图对象
+        let globalGardenData = [];
+        let globalMap = null;
+        let districtPolygons = [];
+        let currentSelectedDistrict = null;
+        let districtClicked = false;  // 标记是否点击了区县
+
+        /**
+         * 统计某个区县内各级文物保护单位数量
+         */
+        function calculateDistrictStats(districtName) {
+            const stats = {
+                world: 0,
+                national: 0,
+                provincial: 0,
+                city: 0,
+                other: 0,
+                total: 0
+            };
+
+            globalGardenData.forEach(garden => {
+                // 直接使用CSV数据中的区县字段进行匹配
+                if (garden.district === districtName) {
+                    stats[garden.level]++;
+                    stats.total++;
+                }
+            });
+
+            return stats;
+        }
+
+        /**
+         * 更新区县统计面板
+         */
+        function updateDistrictPanel(districtName, stats) {
+            document.getElementById('districtPanel').style.display = 'block';
+            document.getElementById('districtName').textContent = districtName;
+            document.getElementById('worldCount').textContent = stats.world;
+            document.getElementById('nationalCount').textContent = stats.national;
+            document.getElementById('provincialCount').textContent = stats.provincial;
+            document.getElementById('cityCount').textContent = stats.city;
+            document.getElementById('otherCount').textContent = stats.other;
+            document.getElementById('totalDistrictCount').textContent = stats.total;
+        }
+
+        /**
+         * 从本地GeoJSON文件加载苏州市区县边界
+         */
+        function loadDistrictBoundaries(map) {
+            return new Promise((resolve, reject) => {
+                console.log('开始从本地加载苏州市精确区县边界...');
+
+                // 从本地加载精确的区县边界数据（DataV提供的精确边界）
+                fetch('./suzhou_districts.json')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('无法加载GeoJSON文件');
+                        }
+                        return response.json();
+                    })
+                    .then(geojson => {
+                        console.log('成功加载GeoJSON数据:', geojson);
+
+                        const features = geojson.features || [];
+                        console.log(`共加载 ${features.length} 个区县边界`);
+
+                        let polygonCount = 0;
+                        features.forEach(feature => {
+                            const districtName = feature.properties.name;
+                            const coordinates = feature.geometry.coordinates;
+
+                            console.log(`处理区县: ${districtName}`);
+
+                            if (coordinates && coordinates.length > 0) {
+                                // MultiPolygon 格式: coordinates[0][0] 是外环坐标数组
+                                // 将GeoJSON坐标转换为高德地图格式
+                                const path = coordinates[0][0].map(coord => new AMap.LngLat(coord[0], coord[1]));
+
+                                console.log(`  - 坐标点数量: ${path.length}`);
+
+                                // 创建多边形
+                                const polygon = new AMap.Polygon({
+                                    path: path,
+                                    strokeColor: '#1890ff',
+                                    strokeWeight: 2,
+                                    strokeOpacity: 0.6,
+                                    fillColor: '#1890ff',
+                                    fillOpacity: 0.1,
+                                    cursor: 'pointer',
+                                    bubble: true
+                                });
+
+                                // 存储区县信息
+                                polygon.districtName = districtName;
+
+                                // 鼠标悬停效果
+                                polygon.on('mouseover', function () {
+                                    if (currentSelectedDistrict !== this) {
+                                        this.setOptions({
+                                            fillOpacity: 0.25,
+                                            strokeWeight: 3
+                                        });
+                                    }
+                                });
+
+                                polygon.on('mouseout', function () {
+                                    if (currentSelectedDistrict !== this) {
+                                        this.setOptions({
+                                            fillOpacity: 0.1,
+                                            strokeWeight: 2
+                                        });
+                                    }
+                                });
+
+                                // 点击事件
+                                polygon.on('click', function (e) {
+                                    console.log('点击区县:', this.districtName);
+
+                                    // 设置标志，防止地图点击事件触发
+                                    districtClicked = true;
+
+                                    // 重置之前选中的区县
+                                    if (currentSelectedDistrict) {
+                                        currentSelectedDistrict.setOptions({
+                                            fillColor: '#1890ff',
+                                            fillOpacity: 0.1,
+                                            strokeWeight: 2
+                                        });
+                                    }
+
+                                    // 高亮当前区县
+                                    this.setOptions({
+                                        fillColor: '#52c41a',
+                                        fillOpacity: 0.35,
+                                        strokeWeight: 3
+                                    });
+
+                                    currentSelectedDistrict = this;
+
+                                    // 计算统计数据（使用CSV中的区县字段）
+                                    const stats = calculateDistrictStats(this.districtName);
+                                    console.log(`${this.districtName} 统计数据:`, stats);
+                                    updateDistrictPanel(this.districtName, stats);
+
+                                    // 延迟重置标志，确保地图点击事件不会触发
+                                    setTimeout(function() {
+                                        districtClicked = false;
+                                    }, 100);
+                                });
+
+                                polygon.setMap(map);
+                                districtPolygons.push(polygon);
+                                polygonCount++;
+                                console.log(`成功添加区县多边形: ${districtName}`);
+                            }
+                        });
+
+                        console.log(`共成功添加 ${polygonCount} 个区县多边形到地图`);
+                        resolve(features);
+                    })
+                    .catch(error => {
+                        console.error('加载区县边界失败:', error);
+                        reject(error);
+                    });
+            });
+        }
+
         /**
          * 初始化地图和可视化图层
          */
@@ -274,14 +547,17 @@
                         year: garden['建造年代'] || '未知',
                         description: garden['描述'] ? (garden['描述'].length > 150 ? garden['描述'].substring(0, 150) + '...' : garden['描述']) : '暂无描述',
                         openStatus: garden['开放情况'] || '未知',
-                        fullDescription: garden['描述'] || '暂无描述'
+                        fullDescription: garden['描述'] || '暂无描述',
+                        district: garden['区县'] || '未知区县'
                     };
                 })
                 .filter(item => item !== null); // 移除无效数据
 
+            // 存储到全局变量
+            globalGardenData = locaData;
+
             // 更新统计信息
             document.getElementById('total-count').textContent = locaData.length;
-            document.getElementById('loading').style.display = 'none';
 
             console.log('成功加载 ' + locaData.length + ' 个有效园林数据点');
 
@@ -296,6 +572,9 @@
                 showLabel: true
             });
 
+            // 存储到全局变量
+            globalMap = map;
+
             // 添加地图控件
             map.addControl(new AMap.Scale());
             map.addControl(new AMap.ToolBar({
@@ -309,49 +588,6 @@
             const loca = new Loca.Container({
                 map: map
             });
-
-            // 创建散点图层（已禁用，改用 Marker）
-            /*
-            const scatterLayer = new Loca.ScatterLayer({
-                loca: loca,
-                zIndex: 10,
-                opacity: 0.9,
-                visible: true,
-                zooms: [2, 22]
-            });
-
-            // 设置 GeoJSON 数据源
-            const dataSource = new Loca.GeoJSONSource({
-                data: {
-                    type: 'FeatureCollection',
-                    features: locaData.map(item => ({
-                        type: 'Feature',
-                        geometry: {
-                            type: 'Point',
-                            coordinates: item.lnglat
-                        },
-                        properties: item
-                    }))
-                }
-            });
-
-            scatterLayer.setSource(dataSource);
-
-            // 设置散点样式 - 更大的点，在默认缩放级别下清晰可见
-            scatterLayer.setStyle({
-                unit: 'px',  // 改为像素单位，更稳定
-                size: [40, 50],  // 增大点的尺寸
-                borderWidth: 2,
-                borderColor: 'rgba(255, 255, 255, 0.8)',
-                color: (index, feature) => {
-                    return feature.properties.color;  // 使用数据中的颜色
-                },
-                texture: 'https://a.amap.com/Loca/static/loca-v2/demos/images/breath_yellow.png',
-                animate: true,
-                duration: 2000,
-                delay: 0
-            });
-            */
 
             // 添加脉冲图层（更美观的动画效果）- 可选，如果影响性能可以注释掉
             /*
@@ -438,15 +674,28 @@
                     currentInfoWindow.open(map, item.lnglat);
                 });
 
+                // 鼠标移出事件 - 自动关闭弹窗
+                marker.on('mouseout', function (e) {
+                    if (currentInfoWindow) {
+                        currentInfoWindow.close();
+                        currentInfoWindow = null;
+                    }
+                });
+
                 // 点击事件 - 显示完整详细信息
                 marker.on('click', function (e) {
-                    // 阻止事件冒泡到地图
-                    e.stopPropagation();
+                    // 设置标志，防止地图点击事件触发
+                    districtClicked = true;
 
                     // 关闭之前的信息窗口
                     if (currentInfoWindow) {
                         currentInfoWindow.close();
                     }
+
+                    // 延迟重置标志
+                    setTimeout(function() {
+                        districtClicked = false;
+                    }, 100);
 
                     currentInfoWindow = new AMap.InfoWindow({
                         isCustom: false,
@@ -474,17 +723,60 @@
                 markers.push(marker);
             });
 
-            // 点击地图空白处关闭信息窗口
+            // 点击地图空白处关闭信息窗口和重置区县选择
             map.on('click', function () {
+                // 如果刚刚点击了区县，则忽略这次地图点击事件
+                if (districtClicked) {
+                    console.log('忽略地图点击事件（刚点击了区县）');
+                    return;
+                }
+
+                console.log('点击地图空白处');
+
                 if (currentInfoWindow) {
                     currentInfoWindow.close();
                 }
+
+                // 重置区县选择
+                if (currentSelectedDistrict) {
+                    currentSelectedDistrict.setOptions({
+                        fillColor: '#1890ff',
+                        fillOpacity: 0.1,
+                        strokeWeight: 2
+                    });
+                    currentSelectedDistrict = null;
+                }
+
+                // 隐藏区县统计面板
+                document.getElementById('districtPanel').style.display = 'none';
             });
 
             // 启动动画渲染
             loca.animate.start();
 
             console.log('地图可视化渲染完成！');
+
+            // 加载区县边界
+            document.getElementById('loading').textContent = '正在加载区县边界...';
+            document.getElementById('loading').style.display = 'block';
+
+            loadDistrictBoundaries(map)
+                .then(() => {
+                    console.log('区县边界加载完成！');
+                    document.getElementById('loading').style.display = 'none';
+                })
+                .catch(error => {
+                    console.error('加载区县边界失败:', error);
+                    document.getElementById('loading').textContent = '区县边界加载失败，但园林数据仍可正常查看';
+                    setTimeout(() => {
+                        document.getElementById('loading').style.display = 'none';
+                    }, 3000);
+                }).finally(() => {
+                    // 隐藏加载提示
+                    setTimeout(() => {
+                        document.getElementById('loading').style.display = 'none';
+                    }, 2000);
+                });
         }
 
         /**
@@ -517,6 +809,11 @@
                 document.getElementById('loading').style.color = '#ff4d4f';
                 document.getElementById('loading').style.background = '#fff2f0';
                 document.getElementById('loading').style.border = '1px solid #ffccc7';
+            } finally {
+                // 隐藏加载提示
+                setTimeout(() => {
+                    document.getElementById('loading').style.display = 'none';
+                }, 2000);
             }
         }
 
