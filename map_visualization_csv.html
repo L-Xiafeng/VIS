@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>苏州园林地理分布可视化 - 高德地图 LOCA</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background-color: #f5f5f5;
+        }
+
+        #container {
+            width: 100%;
+            height: 100vh;
+            position: relative;
+        }
+
+        .info-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+            max-width: 350px;
+            z-index: 1000;
+        }
+
+        .info-panel h1 {
+            font-size: 20px;
+            color: #333;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #1890ff;
+            padding-bottom: 10px;
+        }
+
+        .info-panel .stats {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .info-panel .legend {
+            margin-top: 15px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+            font-size: 13px;
+            color: #555;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 10px;
+            border: 2px solid rgba(255, 255, 255, 0.8);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 18px;
+            color: #1890ff;
+            z-index: 999;
+            background: white;
+            padding: 20px 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .detail-popup {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            max-width: 300px;
+        }
+
+        .detail-popup h3 {
+            color: #1890ff;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .detail-popup p {
+            margin: 6px 0;
+            font-size: 13px;
+            color: #666;
+            line-height: 1.6;
+        }
+
+        .detail-popup .label {
+            font-weight: bold;
+            color: #333;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="container"></div>
+    <div class="info-panel">
+        <h1>苏州园林地理分布</h1>
+        <div class="stats">
+            <p>总计园林数量: <strong id="total-count">0</strong></p>
+            <p>使用高德地图 LOCA 数据可视化 API 2.0</p>
+        </div>
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-color" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);"></div>
+                <span>世界遗产园林</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);"></div>
+                <span>全国重点文物保护单位</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);"></div>
+                <span>省级文物保护单位</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);"></div>
+                <span>市级文物保护单位</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);"></div>
+                <span>其他园林</span>
+            </div>
+        </div>
+    </div>
+    <div class="loading" id="loading">正在加载地图数据...</div>
+
+    <!-- 高德地图 JS API -->
+    <script src="https://webapi.amap.com/maps?v=2.0&key=YOUR_AMAP_KEY_HERE&plugin=AMap.Scale,AMap.ToolBar"></script>
+    <!-- LOCA 数据可视化 API -->
+    <script src="https://webapi.amap.com/loca?v=2.0.0&key=YOUR_AMAP_KEY_HERE"></script>
+
+    <script>
+        // 高德地图 API 配置
+        const AMAP_KEY = 'YOUR_AMAP_KEY_HERE'; // 替换为你的高德地图 Key
+        const SECURITY_CODE = 'YOUR_SECURITY_CODE_HERE'; // 替换为你的安全密钥
+
+        // 设置安全密钥
+        window._AMapSecurityConfig = {
+            securityJsCode: SECURITY_CODE,
+        };
+
+        // CSV 文件路径（相对路径）
+        const CSV_FILE_PATH = './dataset/all_wiki_with_gps.csv';
+
+        /**
+         * CSV 解析函数 - 处理包含引号和逗号的复杂 CSV
+         */
+        function parseCSV(csvText) {
+            const lines = csvText.split('\n');
+            // 移除 BOM 并分割表头
+            const headers = lines[0].replace(/^\uFEFF/, '').split(',').map(h => h.trim());
+            const data = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                if (!lines[i].trim()) continue; // 跳过空行
+
+                const values = [];
+                let currentValue = '';
+                let insideQuotes = false;
+
+                // 逐字符解析，正确处理 CSV 中的引号和逗号
+                for (let char of lines[i]) {
+                    if (char === '"') {
+                        insideQuotes = !insideQuotes;
+                    } else if (char === ',' && !insideQuotes) {
+                        values.push(currentValue.trim());
+                        currentValue = '';
+                    } else {
+                        currentValue += char;
+                    }
+                }
+                values.push(currentValue.trim()); // 添加最后一个值
+
+                // 确保有足够的列数
+                if (values.length >= headers.length) {
+                    const row = {};
+                    headers.forEach((header, index) => {
+                        row[header] = values[index] ? values[index].replace(/^"|"$/g, '') : ''; // 移除首尾引号
+                    });
+                    data.push(row);
+                }
+            }
+
+            return data;
+        }
+
+        /**
+         * 根据描述判断园林保护等级
+         */
+        function getGardenLevel(description) {
+            if (!description) return { level: 'other', color: '#fee140' };
+
+            if (description.includes('世界遗产名录')) {
+                return { level: 'world', color: '#667eea' };
+            } else if (description.includes('全国重点文物保护单位')) {
+                return { level: 'national', color: '#f5576c' };
+            } else if (description.includes('省文物保护单位') || description.includes('省级文物')) {
+                return { level: 'provincial', color: '#00f2fe' };
+            } else if (description.includes('市文物保护单位') || description.includes('市级文物')) {
+                return { level: 'city', color: '#38f9d7' };
+            } else {
+                return { level: 'other', color: '#fee140' };
+            }
+        }
+
+        /**
+         * 获取保护等级的文字描述
+         */
+        function getLevelText(level) {
+            const levelMap = {
+                'world': '世界文化遗产',
+                'national': '全国重点文物保护单位',
+                'provincial': '省级文物保护单位',
+                'city': '市级文物保护单位',
+                'other': '其他'
+            };
+            return levelMap[level] || '未知';
+        }
+
+        function getLevelIndex(level) {
+            const levelOrder = {
+                'world': 4,
+                'national': 3,
+                'provincial': 2,
+                'city': 1,
+                'other': 0
+            };
+            return levelOrder[level] || 0;
+        }
+
+        /**
+         * 初始化地图和可视化图层
+         */
+        function initMapWithData(gardenData) {
+            // 过滤并准备 LOCA 数据
+            const locaData = gardenData
+                .filter(garden => garden['经度'] && garden['纬度'] && garden['经度'] !== '' && garden['纬度'] !== '')
+                .map(garden => {
+                    const level = getGardenLevel(garden['描述']);
+                    const lng = parseFloat(garden['经度']);
+                    const lat = parseFloat(garden['纬度']);
+
+                    // 验证经纬度是否有效
+                    if (isNaN(lng) || isNaN(lat)) return null;
+
+                    return {
+                        name: garden['名称'] || '未命名',
+                        lnglat: [lng, lat],
+                        value: parseInt(garden['面积（㎡）']) || 1000,
+                        color: level.color,
+                        level: level.level,
+                        address: garden['地址'] || '未知地址',
+                        year: garden['建造年代'] || '未知',
+                        description: garden['描述'] ? (garden['描述'].length > 150 ? garden['描述'].substring(0, 150) + '...' : garden['描述']) : '暂无描述',
+                        openStatus: garden['开放情况'] || '未知',
+                        fullDescription: garden['描述'] || '暂无描述'
+                    };
+                })
+                .filter(item => item !== null); // 移除无效数据
+
+            // 更新统计信息
+            document.getElementById('total-count').textContent = locaData.length;
+            document.getElementById('loading').style.display = 'none';
+
+            console.log('成功加载 ' + locaData.length + ' 个有效园林数据点');
+
+            // 初始化地图
+            const map = new AMap.Map('container', {
+                zoom: 12,
+                center: [120.62, 31.31], // 苏州市中心
+                viewMode: '3D',
+                pitch: 40,
+                rotation: 0,
+                mapStyle: 'amap://styles/blue',
+                showLabel: true
+            });
+
+            // 添加地图控件
+            map.addControl(new AMap.Scale());
+            map.addControl(new AMap.ToolBar({
+                position: {
+                    bottom: '20px',
+                    right: '20px'
+                }
+            }));
+
+            // 初始化 Loca 容器
+            const loca = new Loca.Container({
+                map: map
+            });
+
+            // 创建散点图层（已禁用，改用 Marker）
+            /*
+            const scatterLayer = new Loca.ScatterLayer({
+                loca: loca,
+                zIndex: 10,
+                opacity: 0.9,
+                visible: true,
+                zooms: [2, 22]
+            });
+
+            // 设置 GeoJSON 数据源
+            const dataSource = new Loca.GeoJSONSource({
+                data: {
+                    type: 'FeatureCollection',
+                    features: locaData.map(item => ({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Point',
+                            coordinates: item.lnglat
+                        },
+                        properties: item
+                    }))
+                }
+            });
+
+            scatterLayer.setSource(dataSource);
+
+            // 设置散点样式 - 更大的点，在默认缩放级别下清晰可见
+            scatterLayer.setStyle({
+                unit: 'px',  // 改为像素单位，更稳定
+                size: [40, 50],  // 增大点的尺寸
+                borderWidth: 2,
+                borderColor: 'rgba(255, 255, 255, 0.8)',
+                color: (index, feature) => {
+                    return feature.properties.color;  // 使用数据中的颜色
+                },
+                texture: 'https://a.amap.com/Loca/static/loca-v2/demos/images/breath_yellow.png',
+                animate: true,
+                duration: 2000,
+                delay: 0
+            });
+            */
+
+            // 添加脉冲图层（更美观的动画效果）- 可选，如果影响性能可以注释掉
+            /*
+            const pulseLayer = new Loca.PulseLinkLayer({
+                loca: loca,
+                zIndex: 5,
+                opacity: 0.6,
+                visible: true,
+                zooms: [2, 22]
+            });
+
+            pulseLayer.setSource(dataSource);
+            pulseLayer.setStyle({
+                unit: 'meter',
+                dash: [40000, 0, 40000, 0],
+                lineWidth: () => [20000, 1000],
+                height: () => [100, 10000],
+                smoothSteps: 30,
+                speed: () => 1 + Math.random() * 10000,
+                flowLength: 100000,
+                lineColors: (index, feature) => {
+                    const color = feature.properties.color;
+                    return [color, color];
+                },
+                maxHeightScale: 0.4,
+                headColor: 'rgba(255, 255, 255, 0.8)',
+                trailColor: 'rgba(255, 255, 255, 0.2)'
+            });
+            */
+
+            // 在 LOCA 图层之上添加透明的 Marker 标记点用于事件处理
+            const markers = [];
+            let currentInfoWindow = null;
+
+            locaData.forEach(item => {
+                // 创建自定义 HTML 标记 - 调整为更小的尺寸
+                const markerContent = document.createElement('div');
+                markerContent.style.width = '14px';
+                markerContent.style.height = '14px';
+                markerContent.style.borderRadius = '50%';
+                markerContent.style.background = item.color;
+                markerContent.style.border = '2px solid rgba(255, 255, 255, 0.9)';
+                markerContent.style.boxShadow = '0 0 8px rgba(0, 0, 0, 0.4)';
+                markerContent.style.cursor = 'pointer';
+                markerContent.style.transition = 'all 0.2s ease';
+
+                // 添加悬停效果
+                markerContent.onmouseenter = function () {
+                    this.style.transform = 'scale(1.5)';
+                    this.style.zIndex = '1000';
+                };
+                markerContent.onmouseleave = function () {
+                    this.style.transform = 'scale(1)';
+                };
+
+                const marker = new AMap.Marker({
+                    position: item.lnglat,
+                    content: markerContent,
+                    offset: new AMap.Pixel(-12, -12),
+                    zIndex: 100 * getLevelIndex(item.level) // 根据保护等级调整 zIndex
+                });
+
+                // 鼠标悬停事件
+                marker.on('mouseover', function (e) {
+                    // 关闭之前的信息窗口
+                    if (currentInfoWindow) {
+                        currentInfoWindow.close();
+                    }
+
+                    currentInfoWindow = new AMap.InfoWindow({
+                        isCustom: false,
+                        content: `
+                            <div class="detail-popup">
+                                <h3>${item.name}</h3>
+                                <p><span class="label">地址:</span> ${item.address}</p>
+                                <p><span class="label">建造年代:</span> ${item.year}</p>
+                                <p><span class="label">开放情况:</span> ${item.openStatus}</p>
+                                <p style="max-height: 100px; overflow-y: auto;"><span class="label">简介:</span> ${item.description}</p>
+                            </div>
+                        `,
+                        offset: new AMap.Pixel(0, -30),
+                        autoMove: true
+                    });
+                    currentInfoWindow.open(map, item.lnglat);
+                });
+
+                // 点击事件 - 显示完整详细信息
+                marker.on('click', function (e) {
+                    // 阻止事件冒泡到地图
+                    e.stopPropagation();
+
+                    // 关闭之前的信息窗口
+                    if (currentInfoWindow) {
+                        currentInfoWindow.close();
+                    }
+
+                    currentInfoWindow = new AMap.InfoWindow({
+                        isCustom: false,
+                        content: `
+                            <div class="detail-popup" style="max-width: 400px;">
+                                <h3 style="color: #1890ff; font-size: 18px; margin-bottom: 12px;">${item.name}</h3>
+                                <p><span class="label">地址:</span> ${item.address}</p>
+                                <p><span class="label">建造年代:</span> ${item.year}</p>
+                                <p><span class="label">面积:</span> ${item.value} ㎡</p>
+                                <p><span class="label">开放情况:</span> ${item.openStatus}</p>
+                                <p><span class="label">保护等级:</span> ${getLevelText(item.level)}</p>
+                                <div style="max-height: 200px; overflow-y: auto; margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee;">
+                                    <p><span class="label">详细介绍:</span></p>
+                                    <p style="line-height: 1.8; color: #666;">${item.fullDescription}</p>
+                                </div>
+                            </div>
+                        `,
+                        offset: new AMap.Pixel(0, -30),
+                        autoMove: true
+                    });
+                    currentInfoWindow.open(map, item.lnglat);
+                });
+
+                marker.setMap(map);
+                markers.push(marker);
+            });
+
+            // 点击地图空白处关闭信息窗口
+            map.on('click', function () {
+                if (currentInfoWindow) {
+                    currentInfoWindow.close();
+                }
+            });
+
+            // 启动动画渲染
+            loca.animate.start();
+
+            console.log('地图可视化渲染完成！');
+        }
+
+        /**
+         * 从本地 CSV 文件加载数据
+         */
+        async function loadCSVData() {
+            try {
+                document.getElementById('loading').textContent = '正在加载 CSV 数据...';
+
+                const response = await fetch(CSV_FILE_PATH);
+                if (!response.ok) {
+                    throw new Error('CSV 文件加载失败: ' + response.statusText);
+                }
+
+                const csvText = await response.text();
+                const gardenData = parseCSV(csvText);
+
+                console.log('成功读取 CSV 文件，共 ' + gardenData.length + ' 条原始记录');
+
+                if (gardenData.length === 0) {
+                    throw new Error('CSV 文件中没有有效数据');
+                }
+
+                // 初始化地图
+                initMapWithData(gardenData);
+
+            } catch (error) {
+                console.error('加载 CSV 文件时出错:', error);
+                document.getElementById('loading').textContent = '加载数据失败: ' + error.message;
+                document.getElementById('loading').style.color = '#ff4d4f';
+                document.getElementById('loading').style.background = '#fff2f0';
+                document.getElementById('loading').style.border = '1px solid #ffccc7';
+            }
+        }
+
+        // 页面加载完成后执行
+        window.onload = function () {
+            // 确保高德地图 API 加载完成
+            if (typeof AMap !== 'undefined' && typeof Loca !== 'undefined') {
+                loadCSVData();
+            } else {
+                console.error('高德地图 API 加载失败');
+                document.getElementById('loading').textContent = '地图 API 加载失败，请检查网络连接';
+                document.getElementById('loading').style.color = '#ff4d4f';
+            }
+        };
+    </script>
+</body>
+
+</html>
